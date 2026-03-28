@@ -1,10 +1,19 @@
 import axios from 'axios';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// Create an Axios instance with default configurations
-const client = axios.create({
-    baseURL: 'https://api.example.com', // Replace with your API endpoint
-    timeout: 1000, // Set a timeout if needed
-    headers: {'X-Custom-Header': 'foobar'} // Custom headers
+export const apiClient = axios.create({
+    baseURL: `${API_BASE_URL}/api`,
+    headers: {
+        'Content-Type': 'application/json',
+    }
 });
 
-export default client;
+apiClient.interceptors.request.use(config => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+export default apiClient;
