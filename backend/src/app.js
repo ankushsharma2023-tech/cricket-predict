@@ -105,7 +105,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server - bind to 0.0.0.0
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
