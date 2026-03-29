@@ -1,64 +1,103 @@
+// Require necessary dependencies
 const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const router = express.Router();
+const mysql = require('mysql2/promise');
+const http = require('http');
+const socketIo = require('socket.io');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const authRoutes = require('./routes/auth');
 
-// User model (assumed)
-const User = require('./models/User');
+// Load environment variables from .env file
+dotenv.config();
 
-// Register endpoint
-router.post('/register', async (req, res) => {
-    const { username, password } = req.body;
+// Create an Express app
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+// Enable CORS
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true
+}));
+
+// Middleware to parse request body
+app.use(express.json());
+
+// MySQL connection pool
+const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+});
+
+// Test connection
+pool.getConnection().then(connection => {
+  console.log('✅ MySQL Database Connected!');
+  connection.release();
+}).catch(err => {
+  console.error('❌ Database Connection Error:', err.message);
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        status: 'Backend is running ✅',
+        time: new Date(),
+        database: 'Connected'
+    });
+});
+
+// ==================== AUTH ROUTES ====================
+app.use('/api/auth', authRoutes);
+
+// Users leaderboard endpoint
+app.get('/api/leaderboard', async (req, res) => {
     try {
-        // Check if user exists
-        let user = await User.findOne({ username });
-        if (user) {
-            return res.status(400).json({ msg: 'User already exists' });
-        }
-        
-        // Create a new user
-        user = new User({ username, password });
-
-        // Hash password
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(password, salt);
-
-        await user.save();
-        res.status(201).json({ msg: 'User registered successfully' });
+        const [rows] = await pool.query('SELECT username, score FROM users ORDER BY score DESC LIMIT 10');
+        res.json(rows);
     } catch (error) {
-        console.error(error.message);
-        res.status(500).send('Server error');
+        console.error(error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
-// Login endpoint
-router.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+// Predictions endpoint
+app.post('/api/predictions', async (req, res) => {
+    const { userId, prediction } = req.body;
     try {
-        // Check if user exists
-        let user = await User.findOne({ username });
-        if (!user) {
-            return res.status(400).json({ msg: 'Invalid credentials' });
-        }
-
-        // Check password
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(400).json({ msg: 'Invalid credentials' });
-        }
-
-        // Create and sign JWT
-        const token = jwt.sign({ id: user.id }, 'your_jwt_secret', { expiresIn: '1h' });
-        res.json({ token });
+        await pool.query('INSERT INTO predictions (user_id, prediction) VALUES (?, ?)', [userId, prediction]);
+        res.status(201).json({ message: 'Prediction created' });
+        io.emit('new_prediction', { userId, prediction }); // Real-time update
     } catch (error) {
-        console.error(error.message);
-        res.status(500).send('Server error');
+        console.error(error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
-// 404 Not Found handler (Make sure this is the last route)
-router.use((req, res) => {
-    res.status(404).json({ msg: 'Not Found' });
+// 404 Handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
 });
 
-module.exports = router;
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ error: 'Something went wrong!' });
+});
+
+// Start server
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});
