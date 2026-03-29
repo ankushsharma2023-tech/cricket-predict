@@ -29,32 +29,40 @@ app.use(cors({
 // Middleware to parse request body
 app.use(express.json());
 
-// MySQL connection pool
+// MySQL connection pool - optimized for Railway
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: 5,
     queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelayMs: 0,
+    connectionTimeout: 5000,
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
 });
 
-// Test connection
-pool.getConnection().then(connection => {
-  console.log('✅ MySQL Database Connected!');
-  connection.release();
-}).catch(err => {
-  console.error('❌ Database Connection Error:', err.message);
-});
+let dbConnected = false;
+
+// Test connection (don't block startup)
+pool.getConnection()
+  .then(connection => {
+    console.log('✅ MySQL Database Connected!');
+    dbConnected = true;
+    connection.release();
+  })
+  .catch(err => {
+    console.warn('⚠️  Database will retry on first request:', err.message);
+  });
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'Backend is running ✅',
         time: new Date(),
-        database: 'Connected'
+        database: dbConnected ? 'Connected' : 'Connecting...'
     });
 });
 
@@ -96,8 +104,7 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Start server
-// Start server
+// Start server - bind to 0.0.0.0
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
